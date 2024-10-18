@@ -71,7 +71,12 @@ public class TopOutGameplayLeaderboard
 
     private void updatePlayerLeaderboard(GUI_OnlineLeaderboardPosition leaderboard_position, ZeepkistNetworkPlayer player)
     {
-        if (TopOutTracker.alreadyWinner(player.SteamID))
+        if (TopOutTracker.isNuisance(player.SteamID))
+        {
+            leaderboard_position.position.color = TopOutColors.colorNuisance;
+            leaderboard_position.position.text = "\\o7";
+        }
+        else if (TopOutTracker.alreadyWinner(player.SteamID))
         {
             leaderboard_position.position.color = TopOutColors.colorWinner;
             leaderboard_position.position.text = "WIN";
@@ -79,7 +84,7 @@ public class TopOutGameplayLeaderboard
         else if (TopOutTracker.alreadyFinalist(player.SteamID))
         {
             leaderboard_position.position.color = TopOutColors.colorFinalist;
-            leaderboard_position.position.text = "TOP";
+            leaderboard_position.position.text = "FIN";
         }
         else
         {

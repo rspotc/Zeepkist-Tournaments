@@ -1,7 +1,6 @@
-﻿using BepInEx.Logging;
-
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 using UnityEngine;
@@ -19,6 +18,7 @@ public static class TopOutTracker
     public static int winnerCount = 0;
     public static int finalistCount = 0;
     public static int topThreshold;
+    public static string nuisanceFile = "";
 
     public static TopOutState tournamentState = TopOutState.Inactive;
     public static TopOutSettings tournamentSettings;
@@ -73,9 +73,7 @@ public static class TopOutTracker
             }
             TopOutLogger.Instance.LogInfo("Done deleting Top->Out leaderboard tab");
 
-            TopOutLogger.Instance.LogDebug("Resetting GAME");
             gameplayLeaderboard.resetPlayerLeaderboard();
-            TopOutLogger.Instance.LogDebug("Resetting SPEC");
             spectatorLeaderboard.resetPlayerLeaderboard();
         
             if (ZeepkistNetwork.IsMasterClient)
@@ -135,9 +133,9 @@ public static class TopOutTracker
             {
                 ZeepkistNetwork.ResetChampionshipPoints();
                 if (tournamentSettings.setPrivateOnStart) ZeepkistNetwork.CurrentLobby.UpdateVisibility(false);
-                TopOutChatManager.setServerMessage();
                 TopOutChatManager.setJoinMessage();
                 TopOutChatManager.setRoundTime();
+                TopOutChatManager.serverMessagePage = 0;
             }
         }
         else if (tournamentState == TopOutState.BetweenRounds)
@@ -148,9 +146,8 @@ public static class TopOutTracker
 
             if (ZeepkistNetwork.IsMasterClient)
             {
-                TopOutChatManager.announceFinalists();
-                TopOutChatManager.setServerMessage();
                 TopOutChatManager.setRoundTime();
+                TopOutChatManager.serverMessagePage = 0;
             }
         }
     }
@@ -243,7 +240,11 @@ public static class TopOutTracker
 
         if (!participants.ContainsKey(player.SteamID))
         {
-            participants.Add(player.SteamID, new TopOutPlayer(player.GetTaggedUsername()));
+            participants.Add(player.SteamID, new TopOutPlayer(player.GetUserNameNoTag(), player.GetTaggedUsername())
+            {
+               nuisance = tournamentSettings.allowNuisances && checkNuisanceConfig(player.GetUserNameNoTag(), player.GetTaggedUsername()),
+               fullUsername = player.GetTaggedUsername()
+            });
         }
     }
 
@@ -261,11 +262,18 @@ public static class TopOutTracker
         return participants[playerSteamID].winnerPosition >= 0;
     }
 
-    public static ulong findSteamIDFromUsername(string username)
+    public static bool isNuisance(ulong playerSteamID)
+    {
+        if (!participants.ContainsKey(playerSteamID)) return false;
+
+        return participants[playerSteamID].nuisance;
+    }
+
+    public static ulong findSteamIDFromUsername(string full_username)
     {
         foreach (KeyValuePair<ulong, TopOutPlayer> player in participants)
         {
-            if (player.Value.username == username) return player.Key;
+            if (player.Value.fullUsername == full_username) return player.Key;
         }
         return 0;
     }
@@ -279,6 +287,7 @@ public static class TopOutTracker
         tournamentSettings.timeFromFirstFinish = 1200;
         tournamentSettings.winners = 50;
         tournamentSettings.setPrivateOnStart = false;
+        tournamentSettings.allowNuisances = false;
     }
 
     public static void hostChanged(ZeepkistNetworkPlayer newHost)
@@ -294,6 +303,21 @@ public static class TopOutTracker
         }
     }
 
+    public static string[] getNuisances()
+    {
+        if (!ZeepkistNetwork.IsMasterClient) return [];
+
+        try
+        {
+            return File.ReadAllLines(nuisanceFile);
+        }
+        catch (Exception e)
+        {
+            TopOutLogger.Instance.LogError($"Unhandled Exception in {nameof(getNuisances)}: {e}");
+            return [];
+        }
+    }
+
     private static TopOutTabLeaderboard tabLeaderboard = null;
 
     private static void registerPlayers(bool joining=false)
@@ -302,10 +326,12 @@ public static class TopOutTracker
         {
             if (!participants.ContainsKey(player.SteamID))
             {
-                participants.Add(player.SteamID, new TopOutPlayer(player.GetTaggedUsername())
+                participants.Add(player.SteamID, new TopOutPlayer(player.GetUserNameNoTag(), player.GetTaggedUsername())
                 {
-                    points = joining ? player.ChampionshipPoints.x : 0
-                });
+                    points = joining ? player.ChampionshipPoints.x : 0,
+                    nuisance = tournamentSettings.allowNuisances && checkNuisanceConfig(player.GetUserNameNoTag(), player.GetTaggedUsername()),
+                    fullUsername = player.GetTaggedUsername()
+                }); ;
             }
         }
     }
@@ -340,9 +366,9 @@ public static class TopOutTracker
 
             if (participant.points >= topThreshold)
             {
-                if (!(alreadyFinalist(player.SteamID) || alreadyWinner(player.SteamID)))
+                if (!(isNuisance(player.SteamID) || alreadyFinalist(player.SteamID) || alreadyWinner(player.SteamID)))
                 {
-                    TopOutLogger.Instance.LogInfo($"Adding {participant.username} with points {participant.points} to finalists");
+                    TopOutLogger.Instance.LogInfo($"Adding {participant.fullUsername} with points {participant.points} to finalists");
                     participant.finalist = true;
                     ++finalistCount;
                 }
@@ -357,12 +383,13 @@ public static class TopOutTracker
             LeaderboardItem roundWinner = ZeepkistNetwork.Leaderboard[idx];
             TopOutLogger.Instance.LogInfo($"Checking round leaderboard position {idx}, Username {roundWinner.Username}");
 
+            if (isNuisance(roundWinner.SteamID)) break;
             if (alreadyWinner(roundWinner.SteamID)) continue;
 
             if (alreadyFinalist(roundWinner.SteamID))
             {
                 TopOutPlayer finalist = participants[roundWinner.SteamID];
-                TopOutLogger.Instance.LogInfo($"Swapping {finalist.username} from finalist to winner");
+                TopOutLogger.Instance.LogInfo($"Swapping {finalist.fullUsername} from finalist to winner");
 
                 finalist.winnerPosition = winnerCount;
                 finalist.finalist = false;
@@ -372,10 +399,6 @@ public static class TopOutTracker
                 if (roundWinner.SteamID == ZeepkistNetwork.LocalPlayer.SteamID)
                 {
                     MessengerApi.LogCustomColors("YOU WON!!!", TopOutColors.colorText, TopOutColors.colorSuccess, 5.0f);
-                }
-
-                if (ZeepkistNetwork.IsMasterClient) {
-                    TopOutChatManager.announceWinner(finalist.username);
                 }
             }
             break;
@@ -398,6 +421,7 @@ public static class TopOutTracker
     private static int winnerPosition(ulong playerSteamID)
     {
         if (!participants.ContainsKey(playerSteamID)) return -2;
+        else if (participants[playerSteamID].winnerPosition < 0) return participants[playerSteamID].winnerPosition;
 
         return winnerCount - participants[playerSteamID].winnerPosition;
     }
@@ -407,5 +431,14 @@ public static class TopOutTracker
         if (!participants.ContainsKey(playerSteamID)) return 0;
 
         return participants[playerSteamID].points;
+    }
+
+    private static bool checkNuisanceConfig(string username, string full_username)
+    {
+        foreach (string uname in getNuisances())
+        {
+            if (uname.Trim() == username || uname.Trim() == full_username) return true;
+        }
+        return false;
     }
 }

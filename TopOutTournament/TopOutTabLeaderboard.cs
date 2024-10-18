@@ -64,7 +64,12 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
                 GUI_OnlineLeaderboardPosition item = Instance.leaderboard_tab_positions[i];
 
                 Color playerColor = playerColors[index];
-                if (TopOutTracker.alreadyWinner(player.SteamID))
+                if (TopOutTracker.isNuisance(player.SteamID))
+                {
+                    playerColor = TopOutColors.colorNuisance;
+                    item.pointsCurrent.text = "NUISANCE";
+                }
+                else if (TopOutTracker.alreadyWinner(player.SteamID))
                 {
                     playerColor = TopOutColors.colorWinner;
                     item.pointsCurrent.text = "WINNER";
@@ -72,7 +77,7 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
                 else if (TopOutTracker.alreadyFinalist(player.SteamID))
                 {
                     playerColor = TopOutColors.colorFinalist;
-                    item.pointsCurrent.text = "REACHED TOP";
+                    item.pointsCurrent.text = "FINALIST";
                 }
                 else if (player.ChampionshipPoints.x > 0)
                 {
@@ -89,7 +94,6 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
                     {
                         item.pointsWon.text =
                             "(+" + Mathf.Round(championshipPoints.y).ToString(CultureInfo.InvariantCulture) + ")";
-                        item.pointsWon.color = playerColor;
                     }
                 }
                 item.pointsCurrent.color = playerColor;
@@ -102,7 +106,6 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
                     ? player.CurrentResult.Time.GetFormattedTime()
                     : string.Empty;
                 item.time.text = formattedTime;
-                item.time.color = playerColor;
 
                 if (player.isHost)
                 {
@@ -126,7 +129,6 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
                                 player.GetTaggedUsername().NoParse(),
                                 Steam_TheAchiever.FilterPurpose.player)));
                 }
-                item.player_name.color = playerColor;
             }
         }
         catch (Exception e)

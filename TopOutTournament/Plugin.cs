@@ -3,6 +3,7 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 using System;
+using System.IO;
 using System.Collections.Generic;
 
 using UnityEngine;
@@ -14,6 +15,7 @@ using ZeepSDK.ChatCommands;
 using ZeepSDK.Messaging;
 using ZeepSDK.Multiplayer;
 using ZeepSDK.Racing;
+using ZeepkistNetworking;
 
 namespace Zeepkist;
 
@@ -32,6 +34,7 @@ public class Plugin : BaseUnityPlugin
     private static ConfigEntry<int> ConfigWinnerCount;
     private static ConfigEntry<int> ConfigRoundTimer;
     private static ConfigEntry<int> ConfigTimeAfterFirstFinish;
+    private static ConfigEntry<bool> ConfigAllowNuisances;
 
     private void Awake()
     {
@@ -84,6 +87,7 @@ public class Plugin : BaseUnityPlugin
             "Countdown Time from First Finish",
             60,
             new ConfigDescription("Time allowed for other competitors\nto finish after first finisher", new AcceptableValueRange<int>(30, 86400)));
+        Plugin.ConfigAllowNuisances = this.Config.Bind<bool>("Other", "Turn on Nuisance Players", false, "Players in nuisance.txt file can't win, just inhibit progress of other players");
 
         tournamentSettings.toggleUseThreshold(Plugin.ConfigUseAbsoluteThreshold.Value);
         tournamentSettings.toggleFirstFinishTimer(Plugin.ConfigFirstFinishStartsTimer.Value);
@@ -93,6 +97,7 @@ public class Plugin : BaseUnityPlugin
         tournamentSettings.setWinnerCount(Plugin.ConfigWinnerCount.Value);
         tournamentSettings.setRoundTimer(Plugin.ConfigRoundTimer.Value);
         tournamentSettings.setTimerFromFirstFinish(Plugin.ConfigTimeAfterFirstFinish.Value);
+        tournamentSettings.toggleNuisances(Plugin.ConfigAllowNuisances.Value);
 
         Plugin.ConfigUseAbsoluteThreshold.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.toggleUseThreshold(Plugin.ConfigUseAbsoluteThreshold.Value));
         Plugin.ConfigFirstFinishStartsTimer.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.toggleFirstFinishTimer(Plugin.ConfigFirstFinishStartsTimer.Value));
@@ -102,6 +107,12 @@ public class Plugin : BaseUnityPlugin
         Plugin.ConfigWinnerCount.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setWinnerCount(Plugin.ConfigWinnerCount.Value));
         Plugin.ConfigRoundTimer.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setRoundTimer(Plugin.ConfigRoundTimer.Value));
         Plugin.ConfigTimeAfterFirstFinish.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setTimerFromFirstFinish(Plugin.ConfigTimeAfterFirstFinish.Value));
+        Plugin.ConfigAllowNuisances.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.toggleNuisances(Plugin.ConfigAllowNuisances.Value));
+
+        string modStorage = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Zeepkist", "Mods", MyPluginInfo.PLUGIN_GUID);
+        Directory.CreateDirectory(modStorage);
+        TopOutTracker.nuisanceFile = Path.Combine(modStorage, "nuisance.txt");
+        if (!File.Exists(TopOutTracker.nuisanceFile)) File.Create(TopOutTracker.nuisanceFile);
     }
 
     private void setupTriggers()
@@ -188,7 +199,6 @@ public class Plugin : BaseUnityPlugin
     {
         private static void Postfix(List<GUI_OnlineLeaderboardPosition> ___leaderboard_ingame_positions)
         {
-            TopOutLogger.Instance.LogDebug("Leaderboard Spec AWAKE");
             TopOutTracker.spectatorLeaderboard.mainLeaderboard = ___leaderboard_ingame_positions;
         }
     }
@@ -214,7 +224,6 @@ public class Plugin : BaseUnityPlugin
     {
         private static void Postfix(List<GUI_OnlineLeaderboardPosition> ___leaderboard_ingame_positions, GUI_OnlineLeaderboardPosition ___leaderboard_your_position)
         {
-            TopOutLogger.Instance.LogDebug("Leaderboard Game AWAKE");
             TopOutTracker.gameplayLeaderboard.mainLeaderboard = ___leaderboard_ingame_positions;
             TopOutTracker.gameplayLeaderboard.yourLeaderboard = ___leaderboard_your_position;
         }
@@ -268,6 +277,15 @@ public class Plugin : BaseUnityPlugin
 
                 MessengerApi.LogCustomColors("A Zeepkist has crossed the finish line.", TopOutColors.colorNeutral, TopOutColors.colorText, 5.0f);
             }
+        }
+    }
+
+    [HarmonyPatch(typeof(ZeepkistNetwork), "OnChangeLobbyTimer")]
+    public class ZeepkistNetwork_OnChangeLobbyTimer
+    {
+        static void Postfix(ChangeLobbyTimerPacket packet)
+        {
+            TopOutChatManager.updateServerMessage(packet);
         }
     }
 }

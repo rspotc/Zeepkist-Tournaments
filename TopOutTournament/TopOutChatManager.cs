@@ -1,16 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Drawing.Printing;
+using System.Linq;
 using System.Text.RegularExpressions;
-
 using UnityEngine;
 
 using ZeepkistClient;
-
+using ZeepkistNetworking;
 using ZeepSDK.Chat;
 using ZeepSDK.Messaging;
 
 public static class TopOutChatManager
 {
+    public static int serverMessagePage = 0;
+
     public static void sendStartTournament()
     {
         ChatApi.SendMessage("!topout start");
@@ -28,64 +31,7 @@ public static class TopOutChatManager
     {
         if (message.Player == null || !message.Player.isHost || ZeepkistNetwork.IsMasterClient) return;
 
-        if (startOrEndTournament(message)) return;
-
-        if (!(TopOutTracker.tournamentState == TopOutState.BetweenRounds || TopOutTracker.tournamentState == TopOutState.Active)) return;
-        TopOutLogger.Instance.LogInfo($"Received message from host {message.Message}");
-
-        string[] messageLines = message.Message.Split("<br>");
-
-        if (Regex.Replace(messageLines[0], "<.*?>", string.Empty) == "Reached Top:")
-        {
-            for (int idx=1; idx < messageLines.Length; ++idx)
-            {
-                parseFinalist(Regex.Replace(messageLines[idx], "<.*?>", string.Empty));
-            }
-            foreach (KeyValuePair<ulong, TopOutPlayer> player in TopOutTracker.participants)
-            {
-                if (player.Value.winnerPosition == -3) // Were just chatted as a finalist
-                {
-                    player.Value.winnerPosition = -1;
-                }
-                else if (player.Value.points >= TopOutTracker.topThreshold && !TopOutTracker.alreadyWinner(player.Key))
-                {
-                    if (player.Key == ZeepkistNetwork.LocalPlayer.SteamID)
-                    {
-                        MessengerApi.LogCustomColors("YOU WON!!!, at some point we think...", TopOutColors.colorText, TopOutColors.colorSuccess, 5.0f);
-                    }
-
-                    // They have enough points and host said they weren't finalist so they must've won and it was missed
-                    player.Value.winnerPosition = TopOutTracker.winnerCount;
-                    player.Value.finalist = false;
-                    ++TopOutTracker.winnerCount;
-                }
-            }
-        }
-        else if (messageLines.Length == 2 && Regex.Replace(messageLines[0], "<.*?>", string.Empty) == "Top->Out Winner:")
-        {
-            parseWinner(Regex.Replace(messageLines[1], "<.*?>", string.Empty));
-        }
-    }
-
-    public static void announceFinalists()
-    {
-        if (TopOutTracker.finalistCount > 0)
-        {
-            string chatMessage = "Reached Top:";
-
-            foreach (KeyValuePair<ulong, TopOutPlayer> participant in TopOutTracker.participants)
-            {
-                if (participant.Value.finalist) chatMessage += $"<br>{participant.Value.username}";
-            }
-
-            ChatApi.SendMessage(chatMessage);
-        }
-    }
-    
-    public static void announceWinner(string username)
-    {
-        string chatMessage = $"Top->Out Winner:<br>{TopOutTracker.winnerCount}) {username}";
-        ChatApi.SendMessage(chatMessage);
+        startOrEndTournament(message);
     }
 
     public static void setRoundTime(bool finisher=false)
@@ -105,36 +51,180 @@ public static class TopOutChatManager
         ChatApi.SendMessage("/joinmessage blue Welcome to the Top->Out Tournament. Participants accumulate points until reaching a threshold, then must come first in one round to win. (Note: You will be kicked if you finish after winning the tournament)");
     }
 
+    public static void updateServerMessage(ChangeLobbyTimerPacket timePkt)
+    {
+        if (!(ZeepkistNetwork.IsMasterClient && TopOutTracker.tournamentState == TopOutState.Active)) return;
+
+        if (timePkt.TimeLeftString.EndsWith((TopOutTracker.tournamentSettings.roundTime % 10).ToString()))
+        {
+            setServerMessage();
+        }
+    }
+
     public static void setServerMessage()
     {
-        int messageTimer = TopOutTracker.tournamentSettings.roundTime;
-        if (TopOutTracker.tournamentSettings.firstFinishStartsTimer) messageTimer += TopOutTracker.tournamentSettings.timeFromFirstFinish;
-        ChatApi.SendMessage($"/servermessage white {messageTimer} Top->Out: {TopOutTracker.topThreshold} Championship Points | {TopOutTracker.tournamentSettings.winners} Winners");
+        int maxShownLines = 5;
+        int minLineShown = serverMessagePage * maxShownLines + 1;
+        int maxLineShown = (serverMessagePage + 1) * maxShownLines;
+
+        string[] winnerNames = new string[TopOutTracker.tournamentSettings.winners+1];
+        winnerNames[0] += $"<size=+10><pos=60%>{TopOutColors.convertColor(TopOutColors.colorWinner)}<u>Winners</u>";
+        for (int i = 0; i < TopOutTracker.tournamentSettings.winners; ++i) {
+            if (i + 1 < minLineShown || i + 1 > maxLineShown) winnerNames[i+1] = "<size=0%>";
+            else winnerNames[i+1] = "<size=+5>";
+            winnerNames[i+1] += $"<pos=60%>{TopOutColors.convertColor(PlayerManager.Instance.GetColorFromPosition(i+1))}{i+1}) {TopOutColors.convertColor(TopOutColors.colorText)}";
+
+            if (i > TopOutTracker.winnerCount) continue;
+
+            foreach (KeyValuePair<ulong, TopOutPlayer> player in TopOutTracker.participants)
+            {
+                if (player.Value.winnerPosition == i)
+                {
+                    winnerNames[i+1] += $"{player.Value.fullUsername}";
+                    break;
+                }
+            }
+        }
+
+        List<string> finalistNames = new List<string>();
+        finalistNames.Add($"<size=+10><pos=25%>{TopOutColors.convertColor(TopOutColors.colorFinalist)}<u>Finalists</u>");
+        int longestNameAllowed = 25;
+        foreach (KeyValuePair<ulong, TopOutPlayer> player in TopOutTracker.participants)
+        {
+            if (player.Value.finalist)
+            {
+                string nameString;
+                if (finalistNames.Count + 1 < minLineShown || finalistNames.Count + 1 > maxShownLines) nameString = "<size=0%>";
+                else nameString = "<size=+5>";
+
+                nameString += $"<pos=25%>{TopOutColors.convertColor(TopOutColors.colorText)}";
+                if (player.Value.fullUsername.Length > longestNameAllowed) nameString += player.Value.fullUsername.Substring(0, longestNameAllowed) + "<alpha=#00>" + player.Value.fullUsername.Substring(longestNameAllowed);
+                else nameString += player.Value.fullUsername;
+                finalistNames.Add(nameString);
+            }
+        }
+
+        string[] tournamentSettingStrings = new string[5];
+        tournamentSettingStrings[0] = $"<size=+18><b>{TopOutColors.convertColor(TopOutColors.colorNeutral)}TOP{TopOutColors.convertColor(TopOutColors.colorText)}->{TopOutColors.convertColor(TopOutColors.colorNeutral)}OUT</b>";
+        tournamentSettingStrings[1] = $"<size=+13>{TopOutColors.convertColor(TopOutColors.colorText)}<u>TOURNAMENT</u>";
+        tournamentSettingStrings[2] = $"<size=+3>{TopOutColors.convertColor(TopOutColors.colorText)}<i>Points: {TopOutTracker.topThreshold}</i>";
+        tournamentSettingStrings[3] = $"<size=+3>{TopOutColors.convertColor(TopOutColors.colorText)}<i>Round Length: {TopOutTracker.tournamentSettings.roundTime}</i>";
+        tournamentSettingStrings[4] = $"<size=+3>{TopOutColors.convertColor(TopOutColors.colorText)}<i>Finish Timer: ";
+        if (TopOutTracker.tournamentSettings.firstFinishStartsTimer) tournamentSettingStrings[4] += $"{TopOutTracker.tournamentSettings.timeFromFirstFinish}</i>";
+        else tournamentSettingStrings[4] += "N/A</i>";
+
+        string serverMessage = "/servermessage white 0 <align=\"left\">";
+
+        int showableLineCount = Math.Max(minLineShown + tournamentSettingStrings.Length - 1, Math.Max(finalistNames.Count, winnerNames.Length));
+        for (int i=0; i < showableLineCount; ++i)
+        {
+            if (i > 0)
+            {
+                serverMessage += "<br>";
+            }
+
+            if (i == 0)
+            {
+                serverMessage += tournamentSettingStrings[0];
+            }
+            else if (i >= minLineShown && i < maxLineShown)
+            {
+                serverMessage += tournamentSettingStrings[1 + (i - minLineShown)];
+            }
+
+            if (finalistNames.Count > i)
+            {
+                serverMessage += finalistNames[i];
+            }
+            if (winnerNames.Length > i)
+            {
+                serverMessage += winnerNames[i];
+            }
+
+            if (i == 0 || (i >= minLineShown && i < Math.Min(showableLineCount, maxLineShown)))
+            {
+                serverMessage += "<line-height=100%>";
+            }
+            else
+            {
+                serverMessage += "<line-height=0%>";
+            }
+        }
+        if ((++serverMessagePage) * maxShownLines + 1 > showableLineCount - 1) serverMessagePage = 0;
+
+        foreach (KeyValuePair<ulong, TopOutPlayer> player in TopOutTracker.participants)
+        {
+            if (player.Value.nuisance)
+            {
+                serverMessage += $"<br><line-height=0%><size=0%>{player.Value.fullUsername}";
+            }
+        }
+        ChatApi.SendMessage(serverMessage);
     }
 
     public static void getTournamentParams(byte messageType, Color color, string message)
     {
         if (!(TopOutTracker.tournamentState == TopOutState.Inactive || TopOutTracker.tournamentState == TopOutState.Shutdown)
-            && messageType == 2 && message.StartsWith("Top->Out: ") && !ZeepkistNetwork.IsMasterClient)
+            && messageType == 2)
+//            && messageType == 2 && !ZeepkistNetwork.IsMasterClient)
         {
             try
             {
-                string[] parameters = message.Substring(10).Split(" | ", 2);
-                if (parameters.Length != 2) return;
+                string[] lines = message.Split("<br>");
+                if (Regex.Replace(lines[0], "<.*?>", string.Empty) != "TOP->OUTFinalistsWinners") return;
 
-                string[] thresholdParam = parameters[0].Split(' ', 2);
-                if (!(thresholdParam.Length == 2 & thresholdParam[1] == "Championship Points")) return;
+                int numWinners = 0;
+                for (int i = 1; i < lines.Length; ++i)
+                {
+                    string[] columnedLine = Regex.Split(lines[i], "<pos=");
 
-                string[] winnersParam = parameters[1].Split(' ', 2);
-                if (!(winnersParam.Length == 2 && winnersParam[1] == "Winners")) return;
-                
-                TopOutTracker.topThreshold = Int32.Parse(parameters[0].Split(' ', 2)[0]);
-                TopOutTracker.tournamentSettings.winners = Int32.Parse(parameters[1].Split(' ', 2)[0]);
-                TopOutLogger.Instance.LogInfo($"Server message set topThreshold to {TopOutTracker.topThreshold} and winners to {TopOutTracker.tournamentSettings.winners}");
+                    string rawFirstCol = Regex.Replace(columnedLine[0], "<.*?>", string.Empty);
+                    if (rawFirstCol.Length >= 8 && rawFirstCol.Substring(0, 8) == "Points: ")
+                    {
+                        Int32.TryParse(Regex.Replace(columnedLine[0], "<.*?>", string.Empty).Substring(8), out TopOutTracker.topThreshold);
+                        TopOutLogger.Instance.LogInfo($"Parsed threshold from server message {TopOutTracker.topThreshold}");
+                    }
+                    else if (rawFirstCol.Length >= 14 && rawFirstCol.Substring(0, 14) == "Round Length: ")
+                    {
+                        Int32.TryParse(Regex.Replace(columnedLine[0], "<.*?>", string.Empty).Substring(14), out TopOutTracker.tournamentSettings.roundTime);
+                        TopOutLogger.Instance.LogInfo($"Parsed roundTime from server message {TopOutTracker.tournamentSettings.roundTime}");
+                    }
+                    else if (rawFirstCol.Length >= 14 && rawFirstCol.Substring(0, 14) == "Finish Timer: ")
+                    {
+                        string finishCountdown = Regex.Replace(columnedLine[0], "<.*?>", string.Empty).Substring(14);
+                        if (finishCountdown == "N/A") TopOutTracker.tournamentSettings.firstFinishStartsTimer = false;
+                        else
+                        {
+                            TopOutTracker.tournamentSettings.firstFinishStartsTimer = true;
+                            Int32.TryParse(finishCountdown, out TopOutTracker.tournamentSettings.timeFromFirstFinish);
+                        }
+                        TopOutLogger.Instance.LogInfo($"Parsed finishTime from server message {TopOutTracker.tournamentSettings.firstFinishStartsTimer} {TopOutTracker.tournamentSettings.timeFromFirstFinish}");
+                    }
+                    else if (rawFirstCol != "TOURNAMENT")
+                    {
+                        parseNuisance(rawFirstCol);
+                    }
+
+                    for (int j = 0; j < columnedLine.Length; ++j)
+                    {
+                        if (columnedLine[j].Substring(0, 4) == "25%>")
+                        {
+                            parseFinalist(Regex.Replace(columnedLine[j].Substring(4), "<.*?>", string.Empty));
+                        }
+                        else if (columnedLine[j].Substring(0, 4) == "60%>")
+                        {
+                            ++numWinners;
+                            parseWinner(Regex.Replace(columnedLine[j].Substring(4), "<.*?>", string.Empty));
+                        }
+                    }
+                }
+                TopOutTracker.tournamentSettings.winners = numWinners;
+                TopOutLogger.Instance.LogInfo($"Parsed winners from server message {TopOutTracker.tournamentSettings.winners}");
             }
-            catch
+            catch (Exception e)
             {
                 TopOutLogger.Instance.LogWarning($"Malformed \"Top->Out: \" server message {message}");
+                TopOutLogger.Instance.LogError($"Unhandled Exception in {nameof(getTournamentParams)}: {e}");
             }
         }
     }
@@ -178,10 +268,11 @@ public static class TopOutChatManager
             foreach (ZeepkistNetworkPlayer player in ZeepkistNetwork.PlayerList)
             {
                 if (player.GetTaggedUsername() == username) {
-                    TopOutTracker.participants.Add(player.SteamID, new TopOutPlayer(player.GetTaggedUsername())
+                    TopOutTracker.participants.Add(player.SteamID, new TopOutPlayer(player.GetUserNameNoTag(), player.GetTaggedUsername())
                     {
                         finalist = true,
-                        winnerPosition = -3
+                        winnerPosition = -1,
+                        nuisance = false
                     });
 
                     ++TopOutTracker.finalistCount;
@@ -194,12 +285,9 @@ public static class TopOutChatManager
             if (!TopOutTracker.alreadyFinalist(steamID))
             {
                 TopOutTracker.participants[steamID].finalist = true;
-                TopOutTracker.participants[steamID].winnerPosition = -3;
+                TopOutTracker.participants[steamID].winnerPosition = -1;
+                TopOutTracker.participants[steamID].nuisance = false;
                 ++TopOutTracker.finalistCount;
-            }
-            else
-            {
-                TopOutTracker.participants[steamID].winnerPosition = -3;
             }
         }
     }
@@ -220,10 +308,11 @@ public static class TopOutChatManager
                     foreach (ZeepkistNetworkPlayer player in ZeepkistNetwork.PlayerList)
                     {
                         if (player.GetTaggedUsername() == winnerUsername) {
-                            TopOutTracker.participants.Add(player.SteamID, new TopOutPlayer(player.GetTaggedUsername())
+                            TopOutTracker.participants.Add(player.SteamID, new TopOutPlayer(player.GetUserNameNoTag(), player.GetTaggedUsername())
                             {
                                 finalist = false,
-                                winnerPosition = winnerRank
+                                winnerPosition = winnerRank,
+                                nuisance = false
                             });
 
                             TopOutTracker.winnerCount = winnerRank + 1;
@@ -237,22 +326,46 @@ public static class TopOutChatManager
                     {
                         TopOutTracker.participants[steamID].finalist = false;
                         TopOutTracker.participants[steamID].winnerPosition = winnerRank;
+                        TopOutTracker.participants[steamID].nuisance = false;
                         TopOutTracker.winnerCount = winnerRank + 1;
-
-                        if (steamID == ZeepkistNetwork.LocalPlayer.SteamID)
-                        {
-                            MessengerApi.LogCustomColors("YOU WON!!!", TopOutColors.colorText, TopOutColors.colorSuccess, 5.0f);
-                        }
                     }
                     else if (TopOutTracker.participants[steamID].winnerPosition != winnerRank) {
                         TopOutTracker.participants[steamID].winnerPosition = winnerRank;
+                        TopOutTracker.participants[steamID].nuisance = false;
                     }
                 }
             }
             catch
             {
-                TopOutLogger.Instance.LogInfo($"Unable to determine winner from chat: {winnerString}");
+                TopOutLogger.Instance.LogInfo($"Unable to determine winner from server message: {winnerString}");
             }
+        }
+    }
+
+    private static void parseNuisance(string username)
+    {
+        ulong steamID = TopOutTracker.findSteamIDFromUsername(username);
+        
+        if (steamID == 0)
+        {
+            foreach (ZeepkistNetworkPlayer player in ZeepkistNetwork.PlayerList)
+            {
+                if (player.GetTaggedUsername() == username) {
+                    TopOutTracker.participants.Add(player.SteamID, new TopOutPlayer(player.GetUserNameNoTag(), player.GetTaggedUsername())
+                    {
+                        finalist = false,
+                        winnerPosition = -1,
+                        nuisance = true
+                    });
+                    break;
+                }
+            }
+        }
+        else
+        {
+            TopOutTracker.participants[steamID].finalist = false;
+            TopOutTracker.participants[steamID].winnerPosition = -1;
+            TopOutTracker.participants[steamID].nuisance = true;
         }
     }
 }

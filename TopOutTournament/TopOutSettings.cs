@@ -8,6 +8,7 @@
     public int winners;
     public int roundTime;
     public int timeFromFirstFinish;
+    public bool allowNuisances;
 
     public void toggleUseThreshold(bool using_threshold)
     {
@@ -47,5 +48,10 @@
     public void setTimerFromFirstFinish(int countdown_time)
     {
         timeFromFirstFinish = countdown_time;
+    }
+
+    public void toggleNuisances(bool use_nuisance)
+    {
+        allowNuisances = use_nuisance;
     }
 }
