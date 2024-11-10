@@ -1,19 +1,13 @@
 ﻿public struct TopOutSettings
 {
-    public bool useThreshold;
     public bool firstFinishStartsTimer;
     public bool setPrivateOnStart;
-    public int rounds;
     public int threshold;
     public int winners;
     public int roundTime;
     public int timeFromFirstFinish;
     public bool allowNuisances;
-
-    public void toggleUseThreshold(bool using_threshold)
-    {
-        useThreshold = using_threshold;
-    }
+    public bool winnerIsNuisance;
 
     public void toggleFirstFinishTimer(bool first_finish)
     {
@@ -23,11 +17,6 @@
     public void togglePrivateRoomOption(bool set_private)
     {
         setPrivateOnStart = set_private;
-    }
-
-    public void setRounds(int min_rounds)
-    {
-        rounds = min_rounds;
     }
 
     public void setThreshold(int threshold_val)
@@ -53,5 +42,10 @@
     public void toggleNuisances(bool use_nuisance)
     {
         allowNuisances = use_nuisance;
+    }
+
+    public void toggleWinnerNuisance(bool winner_nuisance)
+    {
+        winnerIsNuisance = winner_nuisance;
     }
 }

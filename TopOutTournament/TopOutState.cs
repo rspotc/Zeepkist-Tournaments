@@ -5,5 +5,6 @@
     Initiated,
     Active,
     BetweenRounds,
-    Shutdown
+    Shutdown,
+    Joined
 }

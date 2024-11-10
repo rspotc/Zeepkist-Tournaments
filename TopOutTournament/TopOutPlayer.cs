@@ -1,6 +1,4 @@
-﻿using System;
-
-public class TopOutPlayer
+﻿public class TopOutPlayer
 {
 	public TopOutPlayer(string uname, string fullUname) { username = uname; fullUsername = fullUname; }
 
@@ -10,4 +8,5 @@ public class TopOutPlayer
 	public int winnerPosition = -1;
 	public bool finalist = false;
 	public bool nuisance = false;
+	public float currentTime = 0;
 }

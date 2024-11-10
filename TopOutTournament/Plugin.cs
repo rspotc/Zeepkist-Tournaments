@@ -6,7 +6,6 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 
-using UnityEngine;
 using TMPro;
 
 using ZeepkistClient;
@@ -26,15 +25,14 @@ public class Plugin : BaseUnityPlugin
     private Harmony harmony;
     private static TopOutSettings tournamentSettings;
 
-    private static ConfigEntry<bool> ConfigUseAbsoluteThreshold;
     private static ConfigEntry<bool> ConfigFirstFinishStartsTimer;
     private static ConfigEntry<bool> ConfigPrivateRoom;
-    private static ConfigEntry<int> ConfigMinimumRounds;
     private static ConfigEntry<int> ConfigAbsoluteThresholdVal;
     private static ConfigEntry<int> ConfigWinnerCount;
     private static ConfigEntry<int> ConfigRoundTimer;
     private static ConfigEntry<int> ConfigTimeAfterFirstFinish;
     private static ConfigEntry<bool> ConfigAllowNuisances;
+    private static ConfigEntry<bool> ConfigWinnersBecomeNuisance;
 
     private void Awake()
     {
@@ -45,7 +43,6 @@ public class Plugin : BaseUnityPlugin
         setupConfig();
         setupTriggers();
 
-        // Plugin startup logic
         Logger.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
     }
 
@@ -59,14 +56,8 @@ public class Plugin : BaseUnityPlugin
 
     private void setupConfig()
     {
-        Plugin.ConfigUseAbsoluteThreshold = this.Config.Bind<bool>("Points", "Use Absolute Threshold", true, "Use fixed point threshold instead of number of rounds");
         Plugin.ConfigFirstFinishStartsTimer = this.Config.Bind<bool>("Timer", "Set Countdown on First Finish", true, "Round timer resets to the countdown timer\nvalue after someone finishes");
         Plugin.ConfigPrivateRoom = this.Config.Bind<bool>("Room", "Private Lobby for Tournament", false, "Make the room private during the tournament\nand public again when it ends");
-        Plugin.ConfigMinimumRounds = this.Config.Bind<int>(
-            "Points",
-            "Minimum Rounds",
-            10,
-            new ConfigDescription("If not using absolute threhsold will set threshold\nto 64 times minimum rounds\n(i.e. if a single player gets perfect score)", new AcceptableValueRange<int>(2, 100)));
         Plugin.ConfigAbsoluteThresholdVal = this.Config.Bind<int>(
             "Points",
             "Absolute Point Threshold",
@@ -87,27 +78,26 @@ public class Plugin : BaseUnityPlugin
             "Countdown Time from First Finish",
             60,
             new ConfigDescription("Time allowed for other competitors\nto finish after first finisher", new AcceptableValueRange<int>(30, 86400)));
-        Plugin.ConfigAllowNuisances = this.Config.Bind<bool>("Other", "Turn on Nuisance Players", false, "Players in nuisance.txt file can't win, just inhibit progress of other players");
+        Plugin.ConfigAllowNuisances = this.Config.Bind<bool>("Other", "Turn on Nuisance Players", false, "Players in nuisance.txt file can't win,\njust inhibit progress of other players");
+        Plugin.ConfigWinnersBecomeNuisance = this.Config.Bind<bool>("Other", "Winners become Nuisance", false, "Winners can still set times to act as a nuisance");
 
-        tournamentSettings.toggleUseThreshold(Plugin.ConfigUseAbsoluteThreshold.Value);
         tournamentSettings.toggleFirstFinishTimer(Plugin.ConfigFirstFinishStartsTimer.Value);
         tournamentSettings.togglePrivateRoomOption(Plugin.ConfigPrivateRoom.Value);
-        tournamentSettings.setRounds(Plugin.ConfigMinimumRounds.Value);
         tournamentSettings.setThreshold(Plugin.ConfigAbsoluteThresholdVal.Value);
         tournamentSettings.setWinnerCount(Plugin.ConfigWinnerCount.Value);
         tournamentSettings.setRoundTimer(Plugin.ConfigRoundTimer.Value);
         tournamentSettings.setTimerFromFirstFinish(Plugin.ConfigTimeAfterFirstFinish.Value);
         tournamentSettings.toggleNuisances(Plugin.ConfigAllowNuisances.Value);
+        tournamentSettings.toggleWinnerNuisance(Plugin.ConfigWinnersBecomeNuisance.Value);
 
-        Plugin.ConfigUseAbsoluteThreshold.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.toggleUseThreshold(Plugin.ConfigUseAbsoluteThreshold.Value));
         Plugin.ConfigFirstFinishStartsTimer.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.toggleFirstFinishTimer(Plugin.ConfigFirstFinishStartsTimer.Value));
         Plugin.ConfigPrivateRoom.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.togglePrivateRoomOption(Plugin.ConfigPrivateRoom.Value));
-        Plugin.ConfigMinimumRounds.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setRounds(Plugin.ConfigMinimumRounds.Value));
         Plugin.ConfigAbsoluteThresholdVal.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setThreshold(Plugin.ConfigAbsoluteThresholdVal.Value));
         Plugin.ConfigWinnerCount.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setWinnerCount(Plugin.ConfigWinnerCount.Value));
         Plugin.ConfigRoundTimer.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setRoundTimer(Plugin.ConfigRoundTimer.Value));
         Plugin.ConfigTimeAfterFirstFinish.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.setTimerFromFirstFinish(Plugin.ConfigTimeAfterFirstFinish.Value));
         Plugin.ConfigAllowNuisances.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.toggleNuisances(Plugin.ConfigAllowNuisances.Value));
+        Plugin.ConfigWinnersBecomeNuisance.SettingChanged += new EventHandler((object o, EventArgs e) => tournamentSettings.toggleWinnerNuisance(Plugin.ConfigWinnersBecomeNuisance.Value));
 
         string modStorage = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Zeepkist", "Mods", MyPluginInfo.PLUGIN_GUID);
         Directory.CreateDirectory(modStorage);
@@ -119,14 +109,12 @@ public class Plugin : BaseUnityPlugin
     {
         RacingApi.LevelLoaded += TopOutTracker.startRound;
         RacingApi.RoundEnded += TopOutTracker.endRound;
-        RacingApi.RoundStarted += TopOutTracker.putInPhotoMode;
 
         MultiplayerApi.PlayerJoined += TopOutTracker.playerJoined;
         MultiplayerApi.DisconnectedFromGame += TopOutTracker.localPlayerLeft;
 
         ChatCommandApi.RegisterLocalChatCommand("/", "topout", "\"start\"/\"stop\"/\"join\" Top->Out Tournament", engageTournament);
         ZeepkistNetwork.ChatMessageReceived += new Action<ZeepkistChatMessage>(TopOutChatManager.parseChatForTournamentInfo);
-        ZeepkistNetwork.LobbyMessageReceived += TopOutChatManager.getTournamentParams;
         ZeepkistNetwork.MasterChanged += TopOutTracker.hostChanged;
     }
 
@@ -134,13 +122,12 @@ public class Plugin : BaseUnityPlugin
     {
         RacingApi.LevelLoaded -= TopOutTracker.startRound;
         RacingApi.RoundEnded -= TopOutTracker.endRound;
-        RacingApi.RoundStarted -= TopOutTracker.putInPhotoMode;
 
         MultiplayerApi.PlayerJoined -= TopOutTracker.playerJoined;
         MultiplayerApi.DisconnectedFromGame -= TopOutTracker.localPlayerLeft;
 
         ZeepkistNetwork.ChatMessageReceived -= new Action<ZeepkistChatMessage>(TopOutChatManager.parseChatForTournamentInfo);
-        ZeepkistNetwork.LobbyMessageReceived -= TopOutChatManager.getTournamentParams;
+        ZeepkistNetwork.MasterChanged -= TopOutTracker.hostChanged;
     }
 
     // Important this stays here because this tournamentSettings is the one interfacing with Config
@@ -155,7 +142,6 @@ public class Plugin : BaseUnityPlugin
         else if (args == "stop")
         {
             TopOutTracker.endTournament();
-            MessengerApi.LogCustomColors("Top->Out tournament is over.", TopOutColors.colorNeutral, TopOutColors.colorText, 5.0f);
         }
         else if (args == "join")
         {
@@ -208,9 +194,9 @@ public class Plugin : BaseUnityPlugin
     {
         private static void Postfix()
         {
-            if (!(TopOutTracker.tournamentState == TopOutState.Initiated ||
-                  TopOutTracker.tournamentState == TopOutState.BetweenRounds ||
-                  TopOutTracker.tournamentState == TopOutState.Active))
+            if (TopOutTracker.tournamentState == TopOutState.Primed ||
+                  TopOutTracker.tournamentState == TopOutState.Shutdown ||
+                  TopOutTracker.tournamentState == TopOutState.Inactive)
             {
                 return;
             }
@@ -234,49 +220,14 @@ public class Plugin : BaseUnityPlugin
     {
         private static void Postfix()
         {
-            if (!(TopOutTracker.tournamentState == TopOutState.Initiated ||
-                  TopOutTracker.tournamentState == TopOutState.BetweenRounds ||
-                  TopOutTracker.tournamentState == TopOutState.Active))
+            if (TopOutTracker.tournamentState == TopOutState.Primed ||
+                  TopOutTracker.tournamentState == TopOutState.Shutdown ||
+                  TopOutTracker.tournamentState == TopOutState.Inactive)
             {
                 return;
             }
 
             TopOutTracker.gameplayLeaderboard.displayLeaderboardPoints();
-        }
-    }
-
-    [HarmonyPatch(typeof(ZeepkistNetwork), "OnChangeLobbyTime")]
-    public class ZeepkistNetwork_OnChangeLobbyTime
-    {
-        private static void Postfix()
-        {
-            if (ZeepkistNetwork.CurrentLobby == null || TopOutTracker.tournamentState != TopOutState.Active) return;
-
-            if (TopOutTracker.noFinishers)
-            {
-                if (!ZeepkistNetwork.IsMasterClient)
-                {
-                    TopOutTracker.tournamentSettings.roundTime = (int)ZeepkistNetwork.CurrentLobby.RoundTime;
-
-                    TopOutLogger.Instance.LogInfo($"Determined Top->Out round time is {TopOutTracker.tournamentSettings.roundTime}");
-                }
-
-                TopOutColors.colorTimer = Color.white;
-            }
-            else
-            {
-                if (!ZeepkistNetwork.IsMasterClient)
-                {
-                    TopOutTracker.tournamentSettings.firstFinishStartsTimer = true;
-                    TopOutTracker.tournamentSettings.timeFromFirstFinish = (int)ZeepkistNetwork.CurrentLobby.RoundTime;
-
-                    TopOutLogger.Instance.LogInfo($"Determined Top->Out countdown time is {TopOutTracker.tournamentSettings.timeFromFirstFinish}");
-                }
-
-                TopOutColors.colorTimer = Color.red;
-
-                MessengerApi.LogCustomColors("A Zeepkist has crossed the finish line.", TopOutColors.colorNeutral, TopOutColors.colorText, 5.0f);
-            }
         }
     }
 
@@ -286,6 +237,16 @@ public class Plugin : BaseUnityPlugin
         static void Postfix(ChangeLobbyTimerPacket packet)
         {
             TopOutChatManager.updateServerMessage(packet);
+        }
+    }
+
+    [HarmonyPatch(typeof(ZeepkistNetwork), "SetMasterClient")]
+    public class ZeepkistNetwork_SetMasterClient
+    {
+        static bool Prefix()
+        {
+            TopOutTracker.endTournament();
+            return true;
         }
     }
 }

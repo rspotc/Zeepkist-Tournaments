@@ -1,4 +1,6 @@
-﻿using System;
+﻿/*
+using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 using UnityEngine;
@@ -39,12 +41,11 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
 
     protected override void OnDraw()
     {
-        ZeepkistNetworkPlayer[] players;
-        Color[] playerColors;
+        List<ZeepkistNetworkPlayer> players;
 
         try
         {
-            players = TopOutTracker.getOrderedPlayers(out playerColors);
+            players = TopOutTracker.getOrderedPlayers();
         }
         catch (Exception e)
         {
@@ -57,13 +58,13 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
             for (int i = 0; i < Instance.leaderboard_tab_positions.Count; ++i)
             {
                 int index = CurrentPage * 16 + i;
-                if (index >= players.Length)
+                if (index >= players.Count)
                     continue;
 
                 ZeepkistNetworkPlayer player = players[index];
                 GUI_OnlineLeaderboardPosition item = Instance.leaderboard_tab_positions[i];
 
-                Color playerColor = playerColors[index];
+                Color playerColor = playerColor = TopOutColors.colorPlayer;
                 if (TopOutTracker.isNuisance(player.SteamID))
                 {
                     playerColor = TopOutColors.colorNuisance;
@@ -81,7 +82,6 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
                 }
                 else if (player.ChampionshipPoints.x > 0)
                 {
-                    playerColor = TopOutColors.colorPlayer;
                     Vector2Int championshipPoints = player.ChampionshipPoints;
                     item.pointsCurrent.text = I2.Loc.LocalizationManager.GetTranslation("Online/Leaderboard/Points")
                         .Replace(
@@ -161,3 +161,4 @@ public class TopOutTabLeaderboard : BaseMultiplayerLeaderboardTab
         }
     }
 }
+*/
